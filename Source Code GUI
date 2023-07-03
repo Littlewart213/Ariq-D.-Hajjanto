@@ -1,0 +1,77 @@
+import cv2
+import mediapipe as mp
+from math import hypot
+from ctypes import cast, POINTER
+from comtypes import CLSCTX_ALL
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+import numpy as np
+
+mpHands = mp.solutions.hands
+hands = mpHands.Hands()
+mpDraw = mp.solutions.drawing_utils
+
+devices = AudioUtilities.GetSpeakers()  # buat koneksi ke speaker system laptop
+interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)  # untuk mengaktifkan volume interface
+volume = cast(interface, POINTER(IAudioEndpointVolume))
+
+volMin, volMax = volume.GetVolumeRange()[:2]  # mengatur range volume/scaling
+
+# Custom video transformer class
+class HandGestureVolumeTransformer:
+    def __init__(self):
+        self.cap = cv2.VideoCapture(0)
+
+    def transform(self, frame):
+        img = frame  # Since we're not using streamlit, no need to convert frame format
+        imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # convert BGR to RGB
+        results = hands.process(imgRGB)  # hasil convert dimasukkan library lalu outputnya disimpan pada variable 'results'
+        lmList = []  # array kosong aja yg nanti dipake buat hand gesture recognition
+
+        if results.multi_hand_landmarks:  # buat ngecheck aja ada yang kedeteksi apa engga namanya juga if
+            for handlandmark in results.multi_hand_landmarks:
+                for id, lm in enumerate(handlandmark.landmark):  # buat nomorin aja untuk setiap titik -->dari website
+                    h, w, c = img.shape  # h=height,w=weight, c=channels dari gambar
+                    cx, cy = int(lm.x * w), int(lm.y * h)  # buat kalkulasi koordinat dari masing-masing titik landmark
+                    lmList.append([id, cx, cy])  # masukin nilai id,cx,cy ke list lmList
+            mpDraw.draw_landmarks(img, handlandmark, mpHands.HAND_CONNECTIONS)  # digunakan untuk visualisasi landmarknya sama garis penghubung (library)
+
+        if lmList != []:  # kalau list ga kosong maka..
+            x1, y1 = lmList[4][1], lmList[4][2]
+            x2, y2 = lmList[20][1], lmList[20][2]
+            cv2.circle(img, (x1, y1), 15, (255, 0, 0), cv2.FILLED)  # gambar lingkaran di jari telunjuk
+            cv2.circle(img, (x2, y2), 15, (255, 0, 0), cv2.FILLED)  # ini di jempol
+            cv2.line(img, (x1, y1), (x2, y2), (255, 0, 0), 3)  # garis penghubung antar jari & jempol
+
+            length = hypot(x2 - x1, y2 - y1)  # buat ngehitung jarak antar titik pakai pythagoras
+            vol = np.interp(length, [15, 220], [volMin, volMax])  # dikarenakan length dan library perlu di kalibrasi maka digunakan library 'interp'
+            volume.SetMasterVolumeLevel(vol, None)  # nge-sets volumenya sama yang udah dikalibrasi
+
+        return img
+
+# Initialize the video transformer
+video_transformer = HandGestureVolumeTransformer()
+
+# Create a separate window for displaying the resized frame
+cv2.namedWindow('Hand Gesture Volume Control')
+
+# Capture frames and apply the transformation
+while True:
+    ret, frame = video_transformer.cap.read()
+    if not ret:
+        break
+    
+    transformed_frame = video_transformer.transform(frame)
+
+    # Resize the frame to a smaller size
+    resized_frame = cv2.resize(transformed_frame, (10, 10))
+
+    # Show the resized frame in the separate window
+    cv2.imshow('Hand Gesture Volume Control', resized_frame)
+
+    # Check for the 'q' key to exit the loop
+    if cv2.waitKey(1) == ord('q'):
+        break
+
+# Release the video capture and destroy windows
+video_transformer.cap.release()
+cv2.destroyAllWindows()
